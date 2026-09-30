@@ -1,76 +1,112 @@
-# Sikora Disable Feeds (Admin)
+# Sikora Disable Feeds
 
-A lightweight WordPress plugin that turns off RSS, RSS2, RDF, and Atom feeds. It removes the feed `<link>` tags from the page source and sends any feed request to the homepage with a permanent (301) redirect.
+> Source of truth for plugin documentation is [`readme.txt`](readme.txt) (WordPress plugin readme format). This file mirrors that content for GitHub and other Markdown viewers.
 
-- **Version:** 2.1.0
-- **Author:** [Sikora Collective](https://sikoracollective.com/)
+Removes feed links from the page source and returns 404 for feed requests.
 
-## What it does
-
-### 1. Removes feed links from `<head>`
-
-WordPress normally adds `<link rel="alternate" type="application/rss+xml" ...>` tags to every page. The plugin removes both sets:
-
-| Hook removed | What it outputs |
+| | |
 | --- | --- |
-| `feed_links` (priority 2) | Main site feed and the global comments feed |
-| `feed_links_extra` (priority 3) | Feeds for single-post comments, categories, tags, authors, search results, and custom post type archives |
+| **Contributors** | sikoracollective |
+| **Tags** | feeds, rss, atom, disable, security |
+| **Requires at least** | 4.0 |
+| **Tested up to** | 6.8 |
+| **Stable tag** | 2.3.0 |
+| **Requires PHP** | 7.1 |
+| **License** | [GPLv2 or later](https://www.gnu.org/licenses/gpl-2.0.html) |
 
-WordPress registers these actions in `wp-includes/default-filters.php`, which loads before plugins, so they are removed as soon as the plugin file runs. No hook wrapper is needed.
+## Description
 
-### 2. Redirects feed requests to the homepage
+Sikora Disable Feeds turns off WordPress feeds with no settings screen and no configuration.
 
-The `sikora_disable_feeds()` function is attached to the built-in feed actions at priority 1, so it runs before WordPress's own feed handlers (priority 10). It sends a `301` redirect to `home_url( '/' )` and stops execution before any feed content is generated.
+The plugin:
 
-| Action | Example URLs |
-| --- | --- |
-| `do_feed_rdf` | `/feed/rdf/` |
-| `do_feed_rss` | `/feed/rss/` |
-| `do_feed_rss2` | `/feed/`, `/feed/rss2/`, `/comments/feed/`, `/category/*/feed/`, `/tag/*/feed/`, `/author/*/feed/` |
-| `do_feed_atom` | `/feed/atom/` |
+- Removes the default feed `<link>` tags from the document `<head>`
+- Removes the Really Simple Discovery (RSD) link from `<head>`
+- Removes the `X-Pingback` response header
+- Returns a non-cacheable HTTP 404 for feed requests (instead of serving feed XML or redirecting)
 
-Comment, category, tag, and author feeds all run through these same actions, so they are covered too. The redirect uses `wp_safe_redirect()`, which only allows destinations on permitted hosts.
+It covers core feed URLs such as `/feed/`, `/feed/rss/`, `/feed/atom/`, comment feeds, category/tag/author feeds, and custom feeds registered with `add_feed()`.
 
-## Requirements
+### How it works
 
-- WordPress 4.x or later
-- PHP 7.1 or later (the plugin uses a `void` return type declaration)
+On `plugins_loaded`, the plugin:
+
+- Removes WordPress's default `feed_links`, `feed_links_extra`, and `rsd_link` actions from `wp_head`
+- Turns off feed link output via the `feed_links_show_posts_feed` and `feed_links_show_comments_feed` filters
+- Strips `X-Pingback` from outgoing headers
+
+On both `wp` and `template_redirect`, when `is_feed()` is true, it sends `nocache_headers()` and ends the request with `wp_die()` and HTTP 404. Using two hooks blocks feed output even if another callback interferes with one of them.
+
+### Notes and limitations
+
+- **Other discovery links remain.** Tags such as the REST API link (`rest_output_link_wp_head`) and oEmbed discovery links are left in place.
+- **Themes can add links back.** Feed links that a theme or another plugin outputs manually, instead of through the default WordPress hooks, will still appear.
+- **Server-level rewrites.** If the web server or CDN rewrites a feed URL before WordPress runs, this plugin cannot handle that request.
 
 ## Installation
 
-### Standard plugin
+### Standard installation
 
-1. Copy the plugin file into a folder such as `wp-content/plugins/sikora-disable-feeds/`.
-2. In the WordPress admin, go to **Plugins** and activate **Sikora Disable Feeds (Admin)**.
+1. Upload the `sikora-disable-feeds` folder to the `/wp-content/plugins/` directory, or upload the plugin zip via **Plugins → Add New → Upload Plugin**.
+2. Activate the plugin through the **Plugins** screen in WordPress.
+3. There is nothing to configure. The plugin takes effect as soon as it is activated.
 
 ### Must-use plugin (optional)
 
-To keep the plugin from being deactivated in the admin, place the PHP file directly in `wp-content/mu-plugins/`. WordPress loads must-use plugins automatically.
+To keep the plugin from being deactivated in the admin, place `sikora-disable-feeds.php` directly in `wp-content/mu-plugins/`. WordPress loads must-use plugins automatically.
 
-## Configuration
+## Frequently Asked Questions
 
-There is nothing to configure. The plugin takes effect as soon as it is activated.
+### Does this plugin have any settings?
 
-## Verifying it works
+No. Activate it and feeds are disabled.
 
-1. View the source of any page. It should contain no `application/rss+xml` or `application/atom+xml` link tags.
-2. Request a feed URL and check the response:
+### Which feeds are disabled?
 
-   ```bash
-   curl -I https://example.com/feed/
-   ```
+All feeds detected by WordPress's `is_feed()` check, including RSS, RSS2, RDF, Atom, comment/category/tag/author feeds, and custom feeds registered with `add_feed()`.
 
-   The response should be `HTTP/1.1 301 Moved Permanently`, with a `Location:` header pointing to the homepage.
+### Why 404 instead of a redirect?
 
-## Notes and limitations
+A 301 to the homepage is often cached by browsers and CDNs, and many homepage redirects look like soft 404s to search engines. A non-cacheable 404 makes it clear the feed is unavailable without permanently mapping those URLs to the homepage.
 
-- **301 redirects are cached.** Browsers and some feed readers remember permanent redirects. After the plugin is deactivated, clients that already received the redirect may keep going to the homepage until their cache expires.
-- **Custom feeds are not covered.** Feeds registered with `add_feed()` by other plugins or themes use their own `do_feed_{name}` action, which this plugin does not intercept.
-- **Other discovery links remain.** Only feed links are removed. Tags such as RSD (`rsd_link`), the REST API link (`rest_output_link_wp_head`), and oEmbed discovery links are left in place.
-- **Themes can add links back.** Feed links that a theme or another plugin outputs manually, instead of through the default WordPress hooks, will still appear.
-- **Unused parameter.** WordPress passes `$is_comment_feed` to `sikora_disable_feeds()`, but the function ignores it because every feed is redirected the same way.
+### How can I verify it is working?
+
+1. View the source of any front-end page. It should contain no `application/rss+xml` or `application/atom+xml` link tags from WordPress's default feed discovery.
+2. Request a feed URL and check the response headers, for example:
+
+```bash
+curl -I https://example.com/feed/
+```
+
+The response should be HTTP 404 (after any normal host redirects such as apex to www).
+
+You can also run the included test script:
+
+```bash
+./tests/test-feeds.sh https://example.com
+```
 
 ## Changelog
 
+### 2.3.0
+
+- Return a non-cacheable HTTP 404 for feed requests instead of a 301 redirect.
+- Intercept feeds on both `wp` and `template_redirect`.
+- Disable feed links via `feed_links_show_posts_feed` and `feed_links_show_comments_feed`.
+- Remove the RSD link and `X-Pingback` header.
+
+### 2.2.0
+
+- Align with WordPress plugin header and coding standards.
+- Bootstrap hooks on `plugins_loaded` instead of at file load.
+- Rename the redirect callback to `sikora_disable_feeds_redirect()`.
+
 ### 2.1.0
-- Current release.
+
+- Redirect all feeds (including custom `add_feed()` feeds) via `template_redirect` and `is_feed()`.
+
+## Upgrade Notice
+
+### 2.3.0
+
+Feed requests now return HTTP 404 instead of redirecting to the homepage. Clear any cached 301s after updating.
