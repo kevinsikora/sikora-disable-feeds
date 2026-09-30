@@ -2,15 +2,15 @@
 
 > Source of truth for plugin documentation is [`readme.txt`](readme.txt) (WordPress plugin readme format). This file mirrors that content for GitHub and other Markdown viewers.
 
-Removes feed links from the page source and redirects feed requests to the homepage.
+Removes feed links from the page source and returns 404 for feed requests.
 
 | | |
 | --- | --- |
 | **Contributors** | sikoracollective |
-| **Tags** | feeds, rss, atom, disable, redirect |
+| **Tags** | feeds, rss, atom, disable, security |
 | **Requires at least** | 4.0 |
 | **Tested up to** | 6.8 |
-| **Stable tag** | 2.2.0 |
+| **Stable tag** | 2.3.0 |
 | **Requires PHP** | 7.1 |
 | **License** | [GPLv2 or later](https://www.gnu.org/licenses/gpl-2.0.html) |
 
@@ -21,23 +21,27 @@ Sikora Disable Feeds turns off WordPress feeds with no settings screen and no co
 The plugin:
 
 - Removes the default feed `<link>` tags from the document `<head>`
-- Redirects feed requests to the site homepage with a permanent (301) redirect
+- Removes the Really Simple Discovery (RSD) link from `<head>`
+- Removes the `X-Pingback` response header
+- Returns a non-cacheable HTTP 404 for feed requests (instead of serving feed XML or redirecting)
 
 It covers core feed URLs such as `/feed/`, `/feed/rss/`, `/feed/atom/`, comment feeds, category/tag/author feeds, and custom feeds registered with `add_feed()`.
 
-Redirects use `wp_safe_redirect()`, so the destination is limited to permitted hosts for this site.
-
 ### How it works
 
-On `plugins_loaded`, the plugin removes WordPress's default `feed_links` and `feed_links_extra` actions from `wp_head`.
+On `plugins_loaded`, the plugin:
 
-On `template_redirect`, when `is_feed()` is true, it sends a 301 redirect to `home_url( '/' )` and stops execution before WordPress can output feed content. That action runs in `template-loader.php` before `do_feed()`.
+- Removes WordPress's default `feed_links`, `feed_links_extra`, and `rsd_link` actions from `wp_head`
+- Turns off feed link output via the `feed_links_show_posts_feed` and `feed_links_show_comments_feed` filters
+- Strips `X-Pingback` from outgoing headers
+
+On both `wp` and `template_redirect`, when `is_feed()` is true, it sends `nocache_headers()` and ends the request with `wp_die()` and HTTP 404. Using two hooks blocks feed output even if another callback interferes with one of them.
 
 ### Notes and limitations
 
-- **301 redirects are cached.** Browsers and some feed readers remember permanent redirects. After the plugin is deactivated, clients that already received the redirect may keep going to the homepage until their cache expires.
-- **Other discovery links remain.** Only feed links are removed. Tags such as RSD (`rsd_link`), the REST API link (`rest_output_link_wp_head`), and oEmbed discovery links are left in place.
+- **Other discovery links remain.** Tags such as the REST API link (`rest_output_link_wp_head`) and oEmbed discovery links are left in place.
 - **Themes can add links back.** Feed links that a theme or another plugin outputs manually, instead of through the default WordPress hooks, will still appear.
+- **Server-level rewrites.** If the web server or CDN rewrites a feed URL before WordPress runs, this plugin cannot handle that request.
 
 ## Installation
 
@@ -61,6 +65,10 @@ No. Activate it and feeds are disabled.
 
 All feeds detected by WordPress's `is_feed()` check, including RSS, RSS2, RDF, Atom, comment/category/tag/author feeds, and custom feeds registered with `add_feed()`.
 
+### Why 404 instead of a redirect?
+
+A 301 to the homepage is often cached by browsers and CDNs, and many homepage redirects look like soft 404s to search engines. A non-cacheable 404 makes it clear the feed is unavailable without permanently mapping those URLs to the homepage.
+
 ### How can I verify it is working?
 
 1. View the source of any front-end page. It should contain no `application/rss+xml` or `application/atom+xml` link tags from WordPress's default feed discovery.
@@ -70,13 +78,22 @@ All feeds detected by WordPress's `is_feed()` check, including RSS, RSS2, RDF, A
 curl -I https://example.com/feed/
 ```
 
-The response should be a `301 Moved Permanently` with a `Location` header pointing to the homepage.
+The response should be HTTP 404 (after any normal host redirects such as apex to www).
 
-### What happens if I deactivate the plugin later?
+You can also run the included test script:
 
-New feed requests will work again. Clients that previously received a 301 may still follow the cached redirect until that cache expires.
+```bash
+./tests/test-feeds.sh https://example.com
+```
 
 ## Changelog
+
+### 2.3.0
+
+- Return a non-cacheable HTTP 404 for feed requests instead of a 301 redirect.
+- Intercept feeds on both `wp` and `template_redirect`.
+- Disable feed links via `feed_links_show_posts_feed` and `feed_links_show_comments_feed`.
+- Remove the RSD link and `X-Pingback` header.
 
 ### 2.2.0
 
@@ -90,6 +107,6 @@ New feed requests will work again. Clients that previously received a 301 may st
 
 ## Upgrade Notice
 
-### 2.2.0
+### 2.3.0
 
-Follows WordPress coding standards and loads hooks on plugins_loaded. Behavior is unchanged for end users.
+Feed requests now return HTTP 404 instead of redirecting to the homepage. Clear any cached 301s after updating.
